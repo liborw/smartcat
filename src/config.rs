@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
 use std::str::FromStr;
 
 pub const PLACEHOLDER_TOKEN: &str = "#[<input>]";
@@ -52,6 +53,7 @@ impl ToString for Api {
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ApiConfig {
     pub api_key: String,
+    pub api_key_cmd: Option<String>,
     pub url: String,
     pub default_model: Option<String>,
 }
@@ -67,6 +69,7 @@ impl ApiConfig {
     fn openai() -> Self {
         ApiConfig {
             api_key: String::from("<insert_api_key_here>"),
+            api_key_cmd: None,
             url: String::from("https://api.openai.com/v1/chat/completions"),
             default_model: Some(String::from("gpt-4")),
         }
@@ -75,6 +78,7 @@ impl ApiConfig {
     fn mistral() -> Self {
         ApiConfig {
             api_key: String::from("<insert_api_key_here>"),
+            api_key_cmd: None,
             url: String::from("https://api.openai.com/v1/chat/completions"),
             default_model: Some(String::from("gpt-4")),
         }
@@ -83,6 +87,7 @@ impl ApiConfig {
     fn default_with_api_key(api_key: String) -> Self {
         ApiConfig {
             api_key,
+            api_key_cmd: None,
             url: String::from("https://api.openai.com/v1/chat/completions"),
             default_model: None,
         }
@@ -185,13 +190,33 @@ pub fn get_api_config(api: &str) -> ApiConfig {
 
     let mut api_configs: HashMap<String, ApiConfig> = toml::from_str(&content).unwrap();
 
-    api_configs.remove(api).unwrap_or_else(|| {
+    let mut config = api_configs.remove(api).unwrap_or_else(|| {
         panic!(
             "Prompt {} not found, availables ones are: {:?}",
             api,
             api_configs.keys().collect::<Vec<_>>()
         )
-    })
+    });
+
+    // Update api_key from cmd if specified as api_key_cmd
+    if let Some(cmd) = &config.api_key_cmd {
+        let mut parts = cmd.split_whitespace();
+        let mut fetch_api = Command::new(parts.next().unwrap());
+
+        for arg in parts.into_iter() {
+            fetch_api.arg(arg);
+        }
+
+        let result = fetch_api.output().expect("Failed to start fetch api command");
+
+        if !result.status.success() {
+            panic!("The api_key_cmd failed to execute: {}", String::from_utf8_lossy(&result.stderr));
+        }
+
+        config.api_key = String::from_utf8_lossy(&result.stdout).to_string().strip_suffix("\n").unwrap().to_string();
+    }
+
+    config
 }
 
 pub fn get_prompts() -> HashMap<String, Prompt> {
